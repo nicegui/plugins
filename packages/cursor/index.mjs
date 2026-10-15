@@ -2564,7 +2564,7 @@ async function answerOf(auth, chat, signal, session = "") {
   const tools = toolsOf(chat)
   // Fields ignored by the legacy bridge stay accepted. Report only their
   // names; arbitrary client values need not be reflected back to callers.
-  const consumed = new Set(["model", "messages", "tools", "tool_choice", "reasoning_effort", "service_tier", "stream", "stream_options", "conversation_id", "prompt_cache_key"])
+  const consumed = new Set(["model", "messages", "tools", "tool_choice", "reasoning_effort", "service_tier", "stream", "conversation_id", "prompt_cache_key"])
   const advisories = Object.keys(chat).filter((field) => !consumed.has(field))
     .map((field) => ({ field, code: "generation_option_ignored", enforced: false }))
   const convID = conversationID(chat, session)

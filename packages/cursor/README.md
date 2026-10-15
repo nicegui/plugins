@@ -133,7 +133,7 @@ request-field whitelist or strict generation-option validation. Native tool
 results preserve ordered text and data-URL images and explicit error flags;
 unsupported native result shapes use the legacy history path.
 
-Optional fields such as `stop`, `seed`, `verbosity` and unknown client options
+Optional fields such as `stop`, `seed`, `verbosity`, `stream_options` and unknown client options
 remain accepted and ignored. Replies disclose their names in
 `magpie_cursor.advisories` (`generation_option_ignored`, `enforced: false`),
 without reflecting arbitrary option values. Stop sequences, deterministic

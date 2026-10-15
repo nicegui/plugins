@@ -249,7 +249,7 @@ async function agent(options = {}) {
   return a
 }
 
-for (const fields of [{ unknown_future_option: { nested: true } }, { stop: "END" }, { stop: ["END", "DONE"] }, { verbosity: "low" }, { seed: 42 }]) {
+for (const fields of [{ unknown_future_option: { nested: true } }, { stop: "END" }, { stop: ["END", "DONE"] }, { verbosity: "low" }, { seed: 42 }, { stream_options: { include_usage: false } }]) {
   test(`request compatibility: loader accepts ignored ${Object.keys(fields)[0]}`, async () => {
     const a = await agent({ finalOnly: true })
     const response = await a.ask(auth(), initial(fields))
@@ -295,6 +295,7 @@ test("request compatibility: streaming ignored fields remain progressive and dis
   expect(head).toContain('"magpie_cursor"')
   expect(head).toContain('"field":"seed"')
   expect(head).toContain('"field":"stop"')
+  expect(head).not.toContain('"include_usage"')
   a.finish()
   let rest = ""
   while (true) {
