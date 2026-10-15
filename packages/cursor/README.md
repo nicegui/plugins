@@ -133,6 +133,20 @@ request-field whitelist or strict generation-option validation. Native tool
 results preserve ordered text and data-URL images and explicit error flags;
 unsupported native result shapes use the legacy history path.
 
+Optional fields such as `stop`, `seed`, `verbosity`, `stream_options` and unknown client options
+remain accepted and ignored. Replies disclose their names in
+`magpie_cursor.advisories` (`generation_option_ignored`, `enforced: false`),
+without reflecting arbitrary option values. Stop sequences, deterministic
+seeds, sampling and token caps are not enforced. JSON replies include this
+metadata; streams include it once in the first assistant chunk.
+`magpie_cursor.effective_model` records the native model id, parameters and
+Max Mode selection used for the request, retained across tool continuation.
+An explicit `none`/`off` on a model without a known served off variant remains
+accepted with `reasoning_effort_unserved`; where a picker entry is known,
+the request sends the legacy `thinking=false` hint. This is not a guarantee
+that the model disables reasoning. Unknown model ids keep their original
+parameters and receive the same advisory.
+
 ## Models
 
 The `config` hook declares `auto` (Cursor's pick). Once signed in, the
@@ -147,7 +161,9 @@ minutes), the way pi-cursor-sdk lists Cursor's catalog:
   model served only in Max Mode); 200K when Cursor gives none.
 - Effort is not a model of its own: the model's efforts are its variants,
   and the request's `reasoning_effort` (fitted to the nearest there is) is
-  sent as the model's effort parameter. `none` turns a Claude's thinking off.
+  sent as the model's effort parameter. Explicit `none`/`off` uses the
+  legacy `thinking=false` hint where needed; models without a known served
+  off variant disclose that disabling reasoning is not guaranteed.
 - Fast is not a model of its own either: a `service_tier` of `priority`
   or `fast` sends `fast=true`, anything else `fast=false` (it costs more,
   so only when asked). A model listed at a size Cursor has a fast variant

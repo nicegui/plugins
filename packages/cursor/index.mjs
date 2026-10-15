@@ -702,6 +702,25 @@ function pick(entry, effort, fast, seed) {
   const want = { ...valuesOf(seed ?? def) }
   if (entry.size) want.context = entry.size
   if (effort === "off") effort = "none"
+  if (effort === "none") {
+    const servedOff = entry.variants.some((v) => {
+      const have = valuesOf(v)
+      return (!entry.size || have.context === entry.size)
+        && (!entry.fast || have.fast === (fast ? "true" : "false"))
+        && (have.thinking === "false" || entry.pid && have[entry.pid] === "none" && have.thinking !== "true")
+    })
+    if (!servedOff) {
+      // Keep legacy clients working even when the picker has no off variant.
+      // This hint does not prove that the selected model disables reasoning.
+      // Resolve tier, context, variant slug and mode before attaching a hint
+      // absent from the catalog. It must not select the default fast slug
+      // while sending fast=false, or miss a selected fast variant's Max Mode.
+      const selected = pick(entry, "", fast, seed)
+      const params = selected.params.filter((p) => p.id !== "thinking")
+      params.push({ id: "thinking", value: "false" })
+      return { ...selected, params, offUnserved: true }
+    }
+  }
   if (entry.pid && entry.pid !== "thinking" && effort === "none" && !("none" in entry.levels) && "thinking" in want) {
     // a Claude asked not to think: thinking off at its default effort
     want.thinking = "false"
@@ -836,7 +855,8 @@ function request(raw, model, effort, fast) {
   if (entry) return pick(entry, effort, fast)
   const old = named(raw, model)
   if (old) return pick(old.entry, effort || old.effort, fast || old.fast, old.seed)
-  return { id: model === "auto" ? "default" : model, params: [], maxMode: false }
+  return { id: model === "auto" ? "default" : model, params: [], maxMode: false,
+    ...(["none", "off"].includes(effort) ? { offUnserved: true } : {}) }
 }
 
 function runtimeModel(m) {
@@ -2544,6 +2564,11 @@ async function answerOf(auth, chat, signal, session = "") {
   }
   if (signal?.aborted) return errorResponse({ status: 410, message: "the request was cancelled" })
   const tools = toolsOf(chat)
+  // Fields ignored by the legacy bridge stay accepted. Report only their
+  // names; arbitrary client values need not be reflected back to callers.
+  const consumed = new Set(["model", "messages", "tools", "tool_choice", "reasoning_effort", "service_tier", "stream", "conversation_id", "prompt_cache_key"])
+  const advisories = Object.keys(chat).filter((field) => !consumed.has(field))
+    .map((field) => ({ field, code: "generation_option_ignored", enforced: false }))
   const convID = conversationID(chat, session)
   const prepared = nativeSessions.prepare(tok, chat, convID, tools)
   let r
@@ -2567,12 +2592,13 @@ async function answerOf(auth, chat, signal, session = "") {
     const once = async () => {
       // Retention is an optimization. Admission pressure or unavailable ownership
       // uses the original history builder/decoder without cancelling a live parent.
-      const native = prepared.fallback ? null : nativeSessions.create(prepared, { id, maxMode, params }, { pb, exec, usageOf, failure })
+      const native = prepared.fallback ? null : nativeSessions.create(prepared, { id, maxMode, params, ...(req.offUnserved ? { offUnserved: true } : {}) }, { pb, exec, usageOf, failure })
       const args = { tok, base, id, tools, conv, convID, signal, maxMode, params }
       let response = native ? await runNative({ ...args, native }) : await runOnce(args)
       const rebuild = async () => {
         const fallback = await runOnce(args)
         fallback.diagnostic = "stateless; bootstrap=imported-history; reason=missing-batch-count"
+        fallback.resolution = { id, maxMode, params, ...(req.offUnserved ? { offUnserved: true } : {}) }
         return fallback
       }
       // A missing native batch count may be retried once, only before Chat
@@ -2580,6 +2606,7 @@ async function answerOf(auth, chat, signal, session = "") {
       // uncertain tool result write or duplicate a progressive stream's output.
       if (response.error?.retentionIneligible && !signal?.aborted) response = await rebuild()
       else if (native) response.rebuild = rebuild
+      response.resolution ??= { id, maxMode, params, ...(req.offUnserved ? { offUnserved: true } : {}) }
       response.diagnostic ??= "stateless; bootstrap=imported-history; reason=" + (prepared.fallback || "retention capacity or reservation unavailable")
       return response
     }
@@ -2607,6 +2634,9 @@ async function answerOf(auth, chat, signal, session = "") {
     }
   }
   if (r.error) return errorResponse(r.error)
+  const resolution = r.resolution
+  if (resolution.offUnserved) advisories.push({ field: "reasoning_effort", code: "reasoning_effort_unserved", enforced: false })
+  const diagnostics = { effective_model: { id: resolution.id, parameters: resolution.params, max_mode: resolution.maxMode }, advisories }
   // A resumed owner may fail while submitting results. Surface that uncertain
   // write once; later history rebuilds never submit it again on that owner.
   const it = r.events
@@ -2651,7 +2681,7 @@ async function answerOf(auth, chat, signal, session = "") {
       if (reasoning) msg.reasoning_content = reasoning
       if (calls.length) msg.tool_calls = calls
       r.delivered?.()
-      return Response.json({ id: cid, object: "chat.completion", created, model, choices: [{ index: 0, message: msg, finish_reason: stop }], ...(usage ? { usage } : {}) }, { headers: responseHeaders })
+      return Response.json({ id: cid, object: "chat.completion", created, model, magpie_cursor: diagnostics, choices: [{ index: 0, message: msg, finish_reason: stop }], ...(usage ? { usage } : {}) }, { headers: responseHeaders })
     }
   }
 
@@ -2663,7 +2693,7 @@ async function answerOf(auth, chat, signal, session = "") {
       const next = await events.next()
       if (!began) {
         began = true
-        ctl.enqueue(chunk({ role: "assistant", content: "" }))
+        ctl.enqueue(chunk({ role: "assistant", content: "" }, null, { magpie_cursor: diagnostics }))
       }
       if (next.done) {
         r.delivered?.()

@@ -139,6 +139,20 @@ test("a request goes as the variant its size, effort and fast pick, in that vari
   expect(request(raw, "some-cursor-id", "", undefined)).toEqual({ id: "some-cursor-id", params: [], maxMode: false })
 })
 
+test("unserved off hint preserves selected fast variant and Max Mode", async () => {
+  fakeAPI()
+  const raw = await usable(tok())
+  const p = (r) => Object.fromEntries(r.params.map((x) => [x.id, x.value]))
+  for (const effort of ["none", "off"]) {
+    const standard = request(raw, "composer-2.5", effort, undefined)
+    expect([standard.id, standard.maxMode, p(standard)]).toEqual(["composer-2.5", false, { fast: "false", thinking: "false" }])
+    expect(standard.offUnserved).toBe(true)
+    const fast = request(raw, "claude-opus-5-5@300k", effort, true)
+    expect([fast.id, fast.maxMode, p(fast)]).toEqual(["claude-opus-5-5-medium-fast", true, { context: "300k", effort: "medium", fast: "true", thinking: "false" }])
+    expect(fast.offUnserved).toBe(true)
+  }
+})
+
 test("a picker Cursor can't give is a failure, not an empty list", async () => {
   fakeAPI(null)
   await expect(usable(tok())).rejects.toThrow()

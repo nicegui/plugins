@@ -249,6 +249,83 @@ async function agent(options = {}) {
   return a
 }
 
+for (const fields of [{ unknown_future_option: { nested: true } }, { stop: "END" }, { stop: ["END", "DONE"] }, { verbosity: "low" }, { seed: 42 }, { stream_options: { include_usage: false } }]) {
+  test(`request compatibility: loader accepts ignored ${Object.keys(fields)[0]}`, async () => {
+    const a = await agent({ finalOnly: true })
+    const response = await a.ask(auth(), initial(fields))
+    expect(response.status).toBe(200)
+    expect(a.runs).toHaveLength(1)
+    expect(response.body.magpie_cursor.advisories).toContainEqual({ field: Object.keys(fields)[0], code: "generation_option_ignored", enforced: false })
+  })
+}
+
+for (const reasoning_effort of ["none", "off"]) test(`request compatibility: ${reasoning_effort} without a served off variant stays accepted`, async () => {
+  const picker = [{ name: "synthetic-reasoner", supportsNonMaxMode: true,
+    parameterDefinitions: [{ id: "effort", parameterType: { enumParameter: { values: [{ value: "low" }, { value: "high" }] } } }],
+    variants: [{ legacySlug: "synthetic-reasoner-high", isDefaultNonMaxConfig: true, parameterValues: [{ id: "effort", value: "high" }] }],
+  }]
+  const a = await agent({ finalOnly: true, picker })
+  const response = await a.ask(auth(), initial({ model: "synthetic-reasoner", reasoning_effort }))
+  expect(response.status).toBe(200)
+  const model = nest(a.runs[0], 9)
+  expect(string(model, 1)).toBe("synthetic-reasoner-high")
+  const params = Object.fromEntries(readWire(model).filter((f) => f.no === 3).map((f) => [string(f.data, 1), string(f.data, 2)]))
+  expect(params).toEqual({ effort: "high", thinking: "false" })
+  expect(response.body.magpie_cursor.effective_model.parameters).toEqual(expect.arrayContaining([{ id: "thinking", value: "false" }]))
+  expect(response.body.magpie_cursor.advisories).toContainEqual({ field: "reasoning_effort", code: "reasoning_effort_unserved", enforced: false })
+})
+
+test("request compatibility: tool_choice selection is used without an ignored advisory", async () => {
+  const a = await agent({ finalOnly: true })
+  const response = await a.ask(auth(), initial({ tool_choice: "none" }))
+  expect(response.status).toBe(200)
+  expect(response.body.magpie_cursor.advisories.some((x) => x.field === "tool_choice")).toBe(false)
+  expect(a.runs).toHaveLength(1)
+  const run = a.runs[0]
+  expect(readWire(nest(run, 4)).filter((f) => f.no === 1)).toHaveLength(0)
+})
+
+test("request compatibility: streaming ignored fields remain progressive and disclose hints once", async () => {
+  const a = await agent({ progressiveFinal: true })
+  const response = await a.ask(auth(), initial({ stream: true, seed: 42, stop: "END" }))
+  expect(response.status).toBe(200)
+  const reader = response.body.getReader()
+  const first = await reader.read()
+  const head = new TextDecoder().decode(first.value)
+  expect(head).toContain('"magpie_cursor"')
+  expect(head).toContain('"field":"seed"')
+  expect(head).toContain('"field":"stop"')
+  expect(head).not.toContain('"include_usage"')
+  a.finish()
+  let rest = ""
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    rest += new TextDecoder().decode(value)
+  }
+  expect(rest).toContain("progressive answer")
+  expect(rest).toContain("[DONE]")
+  expect(rest).not.toContain('"magpie_cursor"')
+  expect(a.runs).toHaveLength(1)
+})
+
+test("request compatibility: off hint diagnostics survive same-Run continuation and replay", async () => {
+  const a = await agent({ finalAfterFirst: true })
+  const account = auth(), chat = initial({ reasoning_effort: "none", stop: "END" })
+  const first = await a.ask(account, chat)
+  expect(first.status).toBe(200)
+  const next = continueWith(chat, first.body, ["synthetic compatibility marker"])
+  const final = await a.ask(account, next)
+  expect(final.status).toBe(200)
+  expect(a.runs).toHaveLength(1)
+  expect(final.body.magpie_cursor.advisories).toEqual(first.body.magpie_cursor.advisories)
+  expect(final.body.magpie_cursor.effective_model).toEqual(first.body.magpie_cursor.effective_model)
+  const replay = await a.ask(account, next)
+  expect(replay.status).toBe(200)
+  expect(replay.body.magpie_cursor).toEqual(final.body.magpie_cursor)
+  expect(a.results).toHaveLength(1)
+})
+
 // A fresh Run must obtain already provided client results from bootstrap blobs.
 // The marker is never inferred from Chat requests or from native result writes.
 const rebuilt = (response, marker) => {
