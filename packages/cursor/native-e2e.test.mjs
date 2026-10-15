@@ -275,6 +275,16 @@ for (const reasoning_effort of ["none", "off"]) test(`request compatibility: ${r
   expect(response.body.magpie_cursor.advisories).toContainEqual({ field: "reasoning_effort", code: "reasoning_effort_unserved", enforced: false })
 })
 
+test("request compatibility: tool_choice selection is used without an ignored advisory", async () => {
+  const a = await agent({ finalOnly: true })
+  const response = await a.ask(auth(), initial({ tool_choice: "none" }))
+  expect(response.status).toBe(200)
+  expect(response.body.magpie_cursor.advisories.some((x) => x.field === "tool_choice")).toBe(false)
+  expect(a.runs).toHaveLength(1)
+  const run = a.runs[0]
+  expect(readWire(nest(run, 4)).filter((f) => f.no === 1)).toHaveLength(0)
+})
+
 test("request compatibility: streaming ignored fields remain progressive and disclose hints once", async () => {
   const a = await agent({ progressiveFinal: true })
   const response = await a.ask(auth(), initial({ stream: true, seed: 42, stop: "END" }))

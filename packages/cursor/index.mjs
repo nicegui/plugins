@@ -712,12 +712,13 @@ function pick(entry, effort, fast, seed) {
     if (!servedOff) {
       // Keep legacy clients working even when the picker has no off variant.
       // This hint does not prove that the selected model disables reasoning.
-      want.thinking = "false"
-      if (entry.fast) want.fast = fast ? "true" : "false"
-      return { id: seed?.legacySlug || def?.legacySlug || entry.run,
-        params: Object.entries(want).map(([id, value]) => ({ id, value })),
-        maxMode: needsMax(entry.model, seed ?? def) || tokensOf(entry.size) > (entry.model.contextTokenLimit || Infinity),
-        offUnserved: true }
+      // Resolve tier, context, variant slug and mode before attaching a hint
+      // absent from the catalog. It must not select the default fast slug
+      // while sending fast=false, or miss a selected fast variant's Max Mode.
+      const selected = pick(entry, "", fast, seed)
+      const params = selected.params.filter((p) => p.id !== "thinking")
+      params.push({ id: "thinking", value: "false" })
+      return { ...selected, params, offUnserved: true }
     }
   }
   if (entry.pid && entry.pid !== "thinking" && effort === "none" && !("none" in entry.levels) && "thinking" in want) {
@@ -2563,7 +2564,7 @@ async function answerOf(auth, chat, signal, session = "") {
   const tools = toolsOf(chat)
   // Fields ignored by the legacy bridge stay accepted. Report only their
   // names; arbitrary client values need not be reflected back to callers.
-  const consumed = new Set(["model", "messages", "tools", "reasoning_effort", "service_tier", "stream", "stream_options", "conversation_id", "prompt_cache_key"])
+  const consumed = new Set(["model", "messages", "tools", "tool_choice", "reasoning_effort", "service_tier", "stream", "stream_options", "conversation_id", "prompt_cache_key"])
   const advisories = Object.keys(chat).filter((field) => !consumed.has(field))
     .map((field) => ({ field, code: "generation_option_ignored", enforced: false }))
   const convID = conversationID(chat, session)
